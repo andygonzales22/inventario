@@ -2,569 +2,508 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CDB Software Pro - Edición Dinámica</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CDB Inventario Cloud</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase Legacy -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-    <!-- Herramientas Externas -->
-    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
     
+    <!-- Firebase App (la base) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <!-- Firebase Auth -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <!-- Firebase Firestore -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8fafc; overflow-x: hidden; }
-        .view { display: none; padding-bottom: 120px; }
-        .view.active { display: block; animation: fadeIn 0.3s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .nav-item.active { color: #f59e0b; }
-        .nav-item.active div { background-color: #f59e0b; color: white; }
-        #reader { border-radius: 24px; overflow: hidden; border: none !important; }
-        .status-badge { font-size: 9px; font-weight: 800; padding: 2px 8px; border-radius: 99px; text-transform: uppercase; }
-        .modal-overlay { background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); }
-        
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Libre+Barcode+39&display=swap');
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .barcode-font { font-family: 'Libre Barcode 39', cursive; font-size: 85px; line-height: 1; }
         @media print {
-            body * { visibility: hidden; }
-            #print-area, #print-area * { visibility: visible; }
-            #print-area { 
-                position: absolute; 
-                left: 0; 
-                top: 0; 
-                width: 100%; 
-                display: flex !important; 
-                flex-direction: column; 
-                align-items: center;
-                padding: 20px;
-                border: none !important;
-            }
+            body * { visibility: hidden !important; }
+            #print-area, #print-area * { visibility: visible !important; }
+            #print-area { position: absolute; left: 0; top: 0; width: 100mm; display: block !important; background: white; z-index: 9999; padding: 10px; }
+            @page { margin: 0; size: auto; }
         }
+        .animate-fade-in { animation: fadeIn 0.2s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        #reader { width: 100%; border-radius: 20px; overflow: hidden; border: none !important; }
     </style>
 </head>
-<body class="flex justify-center">
+<body class="bg-[#F8F9FA]">
+    <div id="root"></div>
 
-    <div id="main-container" class="w-full max-w-md bg-slate-50 min-h-screen relative shadow-2xl">
-        
-        <!-- Header -->
-        <header class="bg-white/80 backdrop-blur-md p-5 border-b sticky top-0 z-40 flex justify-between items-center">
-            <div>
-                <h1 class="text-xl font-extrabold text-slate-900 leading-none">CDB <span class="text-amber-500">PRO</span></h1>
-                <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Control de Inventario</p>
-            </div>
-            <div id="connection-status" class="flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full">
-                <div class="w-2 h-2 rounded-full bg-slate-300 animate-pulse"></div>
-                <span class="text-[10px] font-bold text-slate-500">...</span>
-            </div>
-        </header>
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, memo } = React;
 
-        <!-- VISTA: HOME -->
-        <div id="view-home" class="view active p-5">
-            <div class="grid grid-cols-3 gap-3 mb-6">
-                <div class="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 text-center">
-                    <p class="text-xl font-black text-slate-900" id="stat-stock">0</p>
-                    <p class="text-[8px] font-bold text-slate-400 uppercase">Stock</p>
+        // Inicialización de Firebase (Compat Mode para evitar errores de módulos en Babel inline)
+        const firebaseConfig = JSON.parse(__firebase_config);
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'cdb-inventario-pro';
+
+        const FormFields = memo(({ data, onChange }) => (
+            <div className="space-y-4">
+                <div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase mb-1 ml-1">Tipo de Materia</label>
+                    <select name="tipoMateria" value={data.tipoMateria} onChange={onChange} className="w-full bg-slate-50 p-4 rounded-xl font-bold outline-none border border-slate-100">
+                        <option value="Tabla">Tabla</option>
+                        <option value="Taco">Taco</option>
+                        <option value="Liston">Listón</option>
+                        <option value="Yugo">Yugo</option>
+                        <option value="Descarte">Descarte</option>
+                    </select>
                 </div>
-                <div class="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 text-center">
-                    <p class="text-xl font-black text-blue-500" id="stat-despacho">0</p>
-                    <p class="text-[8px] font-bold text-slate-400 uppercase">Despacho</p>
-                </div>
-                <div class="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 text-center">
-                    <p class="text-xl font-black text-purple-500" id="stat-recibido">0</p>
-                    <p class="text-[8px] font-bold text-slate-400 uppercase">Recibido</p>
-                </div>
-            </div>
 
-            <div class="bg-amber-500 p-6 rounded-[2.5rem] text-white mb-6 relative overflow-hidden shadow-lg shadow-amber-200">
-                <div class="relative z-10">
-                    <p class="text-xs font-bold opacity-80 uppercase">Volumen Total Global</p>
-                    <h2 class="text-4xl font-black" id="stat-vol-total">0.000 <span class="text-lg">m³</span></h2>
-                </div>
-                <div class="absolute -right-4 -bottom-4 opacity-20 text-8xl">🪵</div>
-            </div>
+                {data.tipoMateria !== 'Descarte' ? (
+                    <div className="space-y-3 animate-fade-in">
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="flex flex-col">
+                                <label className="text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">Largo (mm)</label>
+                                <input name="largo" value={data.largo || ''} onChange={onChange} type="number" placeholder="0" className="w-full bg-slate-50 p-4 rounded-xl font-bold border border-slate-100 outline-none focus:border-blue-300"/>
+                            </div>
+                            <div className="flex flex-col">
+                                <label className="text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">Ancho (mm)</label>
+                                <input name="ancho" value={data.ancho || ''} onChange={onChange} type="number" placeholder="0" className="w-full bg-slate-50 p-4 rounded-xl font-bold border border-slate-100 outline-none focus:border-blue-300"/>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="flex flex-col">
+                                <label className="text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">Espesor (mm)</label>
+                                <input name="espesor" value={data.espesor || ''} onChange={onChange} type="number" placeholder="0" className="w-full bg-slate-50 p-4 rounded-xl font-bold border border-slate-100 outline-none focus:border-blue-300"/>
+                            </div>
+                            <div className="flex flex-col">
+                                <label className="text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1">Piezas</label>
+                                <input name="piezas" value={data.piezas || ''} onChange={onChange} type="number" placeholder="0" className="w-full bg-slate-50 p-4 rounded-xl font-bold border border-slate-100 outline-none focus:border-blue-300"/>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-3 animate-fade-in">
+                        <label className="text-[10px] font-black text-red-400 uppercase mb-1 ml-1">Metros Cúbicos (m³)</label>
+                        <input name="metrosCubicos" value={data.metrosCubicos || ''} onChange={onChange} type="number" step="0.0001" placeholder="0.00" className="w-full bg-red-50 p-6 rounded-xl font-black text-2xl border border-red-100 text-red-900 outline-none"/>
+                    </div>
+                )}
 
-            <div class="grid grid-cols-2 gap-4">
-                <button onclick="navigate('view-form')" class="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col items-center gap-2 active:scale-95 transition-all">
-                    <span class="text-3xl">➕</span>
-                    <span class="text-xs font-black text-slate-700 uppercase">Nuevo Registro</span>
-                </button>
-                <button onclick="navigate('view-scan')" class="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col items-center gap-2 active:scale-95 transition-all">
-                    <span class="text-3xl">🔍</span>
-                    <span class="text-xs font-black text-slate-700 uppercase">Escanear QR</span>
-                </button>
-            </div>
-        </div>
-
-        <!-- VISTA: FORMULARIO -->
-        <div id="view-form" class="view p-5">
-            <div class="flex items-center justify-between mb-6">
-                <h2 class="text-2xl font-black text-slate-800" id="form-title">REGISTRO</h2>
-                <div id="edit-badge" class="hidden px-3 py-1 bg-amber-100 text-amber-600 rounded-full text-[10px] font-black uppercase">Modo Edición</div>
-            </div>
-            
-            <form id="inventory-form" class="space-y-4">
-                <input type="hidden" id="edit-id">
-                
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-2">Materia Prima</label>
-                        <select id="f-materia" onchange="toggleFormFields()" class="w-full p-4 bg-white rounded-2xl border border-slate-200 font-bold outline-none focus:ring-2 focus:ring-amber-500 appearance-none">
-                            <option value="Tabla">Tabla</option>
-                            <option value="Taco">Taco</option>
-                            <option value="Listón">Listón</option>
-                            <option value="Yugo">Yugo</option>
-                            <option value="Costanera">Costanera (Descarte)</option>
+                <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col">
+                        <label className="text-[10px] font-black text-slate-400 uppercase mb-1 ml-1">Estado</label>
+                        <select name="estado" value={data.estado} onChange={onChange} className="w-full bg-slate-50 p-4 rounded-xl font-bold border border-slate-100 outline-none">
+                            <option value="Disponible">Disponible</option>
+                            <option value="Dañado">Dañado</option>
+                            <option value="En Revisión">En Revisión</option>
                         </select>
                     </div>
-
-                    <div id="standard-fields" class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-2">Largo (mm)</label>
-                            <input id="f-largo" type="number" placeholder="0" class="w-full p-4 bg-white rounded-2xl border border-slate-200 outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-2">Ancho (mm)</label>
-                            <input id="f-ancho" type="number" placeholder="0" class="w-full p-4 bg-white rounded-2xl border border-slate-200 outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-2">Espesor (mm)</label>
-                            <input id="f-espesor" type="number" placeholder="0" class="w-full p-4 bg-white rounded-2xl border border-slate-200 outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-2">Cantidad (Pzas)</label>
-                            <input id="f-cantidad" type="number" placeholder="0" class="w-full p-4 bg-white rounded-2xl border border-slate-200 outline-none">
-                        </div>
-                    </div>
-
-                    <div id="costanera-fields" class="hidden">
-                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-2">Metros Cúbicos (m³)</label>
-                        <input id="f-volumen-manual" type="number" step="0.001" placeholder="0.000" class="w-full p-4 bg-white rounded-2xl border border-slate-200 outline-none font-bold text-lg text-amber-600">
+                    <div className="flex flex-col">
+                        <label className="text-[10px] font-black text-slate-400 uppercase mb-1 ml-1">Ubicación</label>
+                        <select name="flujo" value={data.flujo} onChange={onChange} className="w-full bg-slate-50 p-4 rounded-xl font-bold border border-slate-100 outline-none">
+                            <option value="Stock">Stock</option>
+                            <option value="Despacho">Despacho</option>
+                            <option value="Recibido">Recibido</option>
+                        </select>
                     </div>
                 </div>
 
                 <div>
-                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-2">Estado</label>
-                    <div class="grid grid-cols-3 gap-2">
-                        <label class="cursor-pointer">
-                            <input type="radio" name="estado" value="Stock" checked class="hidden peer">
-                            <div class="p-3 text-center rounded-xl border border-slate-200 text-[10px] font-bold peer-checked:bg-emerald-500 peer-checked:text-white peer-checked:border-emerald-500 transition-all uppercase">Stock</div>
-                        </label>
-                        <label class="cursor-pointer">
-                            <input type="radio" name="estado" value="Despacho" class="hidden peer">
-                            <div class="p-3 text-center rounded-xl border border-slate-200 text-[10px] font-bold peer-checked:bg-blue-500 peer-checked:text-white peer-checked:border-blue-500 transition-all uppercase">Despacho</div>
-                        </label>
-                        <label class="cursor-pointer">
-                            <input type="radio" name="estado" value="Recibido" class="hidden peer">
-                            <div class="p-3 text-center rounded-xl border border-slate-200 text-[10px] font-bold peer-checked:bg-purple-500 peer-checked:text-white peer-checked:border-purple-500 transition-all uppercase">Recibido</div>
-                        </label>
-                    </div>
-                </div>
-
-                <div>
-                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-2">Lote / Procedencia</label>
-                    <input id="f-procedencia" type="text" required placeholder="Origen del material" class="w-full p-4 bg-white rounded-2xl border border-slate-200 outline-none uppercase font-bold text-sm">
-                </div>
-
-                <div class="flex flex-col gap-2 pt-4">
-                    <button type="submit" id="btn-save" class="w-full bg-slate-900 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all">
-                        Confirmar Registro
-                    </button>
-                    <button type="button" id="btn-cancel" onclick="resetForm()" class="hidden w-full bg-slate-200 text-slate-600 py-4 rounded-[2rem] font-bold uppercase text-[10px]">
-                        Cancelar Edición
-                    </button>
-                </div>
-            </form>
-        </div>
-
-        <!-- VISTA: INVENTARIO -->
-        <div id="view-inventory" class="view p-5">
-            <h2 class="text-2xl font-black text-slate-800 mb-6">INVENTARIO</h2>
-            <input type="text" id="search-bar" oninput="renderInventory()" placeholder="Buscar por código o lote..." class="w-full p-4 mb-4 bg-white rounded-2xl border-none shadow-sm text-sm outline-none ring-1 ring-slate-100 focus:ring-2 focus:ring-amber-500 transition-all">
-            <div id="inventory-container" class="space-y-3"></div>
-        </div>
-
-        <!-- VISTA: ESCÁNER -->
-        <div id="view-scan" class="view p-5 text-center">
-            <h2 class="text-2xl font-black mb-6 text-slate-800">ESCÁNER</h2>
-            <div id="reader" class="w-full aspect-square bg-slate-200 mb-6"></div>
-            <div class="p-6 bg-white rounded-[2rem] border border-slate-100">
-                <input type="text" id="manual-code" placeholder="CDB-XXXX" class="w-full p-4 bg-slate-50 rounded-2xl outline-none font-mono uppercase text-center font-bold mb-3">
-                <button onclick="searchManual()" class="w-full bg-amber-500 text-white py-4 rounded-2xl font-black active:scale-95 transition-all">BUSCAR PAQUETE</button>
-            </div>
-        </div>
-
-        <!-- MODAL: DETALLE -->
-        <div id="detail-modal" class="fixed inset-0 z-[60] modal-overlay hidden flex items-center justify-center p-6">
-            <div class="bg-white w-full max-w-sm rounded-[2.5rem] overflow-hidden shadow-2xl animate-fadeIn">
-                <div class="p-6 text-center border-b border-slate-100">
-                    <div id="modal-badge" class="inline-block mb-2"></div>
-                    <h3 id="modal-materia" class="text-2xl font-black text-slate-900 leading-tight">Materia</h3>
-                    <p id="modal-id" class="text-xs font-bold text-slate-400 font-mono"></p>
-                </div>
-                <div class="p-6 space-y-4 bg-slate-50">
-                    <!-- ÁREA DE IMPRESIÓN -->
-                    <div id="print-area" class="bg-white p-4 rounded-2xl border border-dashed border-slate-300 flex flex-col items-center">
-                        <svg id="barcode"></svg>
-                        <p id="barcode-text" class="text-[10px] font-black mt-2 uppercase"></p>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-3 text-left">
-                        <div class="bg-white p-3 rounded-xl border border-slate-100">
-                            <p class="text-[8px] font-bold text-slate-400 uppercase">Lote</p>
-                            <p id="modal-procedencia" class="text-[10px] font-black text-slate-800 uppercase truncate"></p>
-                        </div>
-                        <div class="bg-white p-3 rounded-xl border border-slate-100">
-                            <p class="text-[8px] font-bold text-slate-400 uppercase">Volumen</p>
-                            <p id="modal-volumen" class="text-[10px] font-black text-slate-800"></p>
-                        </div>
-                        <div class="bg-white p-3 rounded-xl border border-slate-100 col-span-2">
-                            <p class="text-[8px] font-bold text-slate-400 uppercase">Medidas (mm)</p>
-                            <p id="modal-dims" class="text-[10px] font-black text-slate-800"></p>
-                        </div>
-                    </div>
-                </div>
-                <!-- BOTONES DE ACCIÓN (LOS QUE NECESITAS) -->
-                <div class="p-4 grid grid-cols-3 gap-2 bg-white">
-                    <button id="modal-edit-btn" class="bg-amber-500 text-white py-4 rounded-2xl font-bold text-[10px] uppercase shadow-md active:scale-95 transition-all">Editar</button>
-                    <button id="modal-print-btn" onclick="window.print()" class="bg-slate-900 text-white py-4 rounded-2xl font-bold text-[10px] uppercase shadow-md active:scale-95 transition-all">Imprimir</button>
-                    <button onclick="closeModal()" class="bg-slate-200 text-slate-600 py-4 rounded-2xl font-bold text-[10px] uppercase active:scale-95 transition-all">Cerrar</button>
+                    <label className="text-[10px] font-black text-slate-400 uppercase mb-1 ml-1">Procedencia / Lote</label>
+                    <input name="procedencia" value={data.procedencia || ''} onChange={onChange} type="text" placeholder="Ej: Piura, Lote A1" className="w-full bg-slate-50 p-4 rounded-xl font-bold border border-slate-100 outline-none focus:border-blue-300"/>
                 </div>
             </div>
-        </div>
+        ));
 
-        <!-- Navegación Inferior -->
-        <nav class="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-sm bg-white shadow-2xl border border-slate-100 rounded-[35px] h-20 px-6 flex justify-between items-center z-50">
-            <button onclick="navigate('view-home')" class="nav-item flex flex-col items-center gap-1 active" id="nav-home">
-                <div class="p-2 rounded-xl transition-all"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg></div>
-                <span class="text-[8px] font-black uppercase">Home</span>
-            </button>
-            <button onclick="navigate('view-inventory')" class="nav-item flex flex-col items-center gap-1" id="nav-inventory">
-                <div class="p-2 rounded-xl transition-all"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg></div>
-                <span class="text-[8px] font-black uppercase">Stock</span>
-            </button>
-            <button onclick="navigate('view-form'); resetForm();" class="bg-amber-500 w-14 h-14 rounded-[20px] shadow-lg shadow-amber-200 flex items-center justify-center text-white active:scale-90 transition-all -translate-y-2">
-                <svg class="w-8 h-8" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg>
-            </button>
-            <button onclick="navigate('view-scan')" class="nav-item flex flex-col items-center gap-1" id="nav-scan">
-                <div class="p-2 rounded-xl transition-all"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path></svg></div>
-                <span class="text-[8px] font-black uppercase">Scan</span>
-            </button>
-            <button onclick="exportToExcel()" class="flex flex-col items-center gap-1 text-slate-400">
-                <div class="p-2 rounded-xl"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg></div>
-                <span class="text-[8px] font-black uppercase">XLS</span>
-            </button>
-        </nav>
+        function App() {
+            const [view, setView] = useState('menu');
+            const [records, setRecords] = useState([]);
+            const [selectedItem, setSelectedItem] = useState(null);
+            const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+            const [manualCode, setManualCode] = useState('');
+            const [isEditing, setIsEditing] = useState(false);
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+            
+            const initialForm = {
+                tipoMateria: 'Tabla',
+                largo: '', ancho: '', espesor: '', piezas: '',
+                procedencia: '', estado: 'Disponible', flujo: 'Stock', metrosCubicos: ''
+            };
+            const [formData, setFormData] = useState(initialForm);
 
-        <!-- Toast Notification -->
-        <div id="toast" class="fixed bottom-28 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest opacity-0 translate-y-10 transition-all z-[100] pointer-events-none shadow-2xl"></div>
+            // Manejo de Autenticación
+            useEffect(() => {
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await auth.signInWithCustomToken(__initial_auth_token);
+                        } else {
+                            await auth.signInAnonymously();
+                        }
+                    } catch (error) {
+                        console.error("Auth error:", error);
+                    }
+                };
+                initAuth();
+                const unsubscribe = auth.onAuthStateChanged((u) => {
+                    setUser(u);
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
 
-    </div>
+            // Escuchar cambios en Tiempo Real
+            useEffect(() => {
+                if (!user) return;
 
-    <script>
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'cdb-pro-master';
-        const firebaseConfig = JSON.parse(__firebase_config);
-        
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
-        const auth = firebase.auth();
+                const path = `artifacts/${appId}/public/data/inventario`;
+                const unsubscribe = db.collection(path).onSnapshot(
+                    (snapshot) => {
+                        const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        const sortedItems = items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                        setRecords(sortedItems);
+                    },
+                    (error) => console.error("Firestore Listen error:", error)
+                );
 
-        let stock = [];
-        let html5QrCode = null;
+                return () => unsubscribe();
+            }, [user]);
 
-        // --- INICIO APP ---
-        window.onload = () => {
-            initApp();
-        };
-
-        async function initApp() {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await auth.signInWithCustomToken(__initial_auth_token);
-                } else {
-                    await auth.signInAnonymously();
+            useEffect(() => {
+                let html5QrCode;
+                if (view === 'scan') {
+                    html5QrCode = new Html5Qrcode("reader");
+                    html5QrCode.start(
+                        { facingMode: "environment" },
+                        { fps: 10, qrbox: { width: 250, height: 250 } },
+                        (decodedText) => {
+                            handleSearchCode(decodedText);
+                            html5QrCode.stop();
+                        },
+                        () => { }
+                    ).catch(err => console.log("Error cámara:", err));
                 }
-                updateStatus('bg-emerald-500', 'CONECTADO');
-                listenToData();
-            } catch (err) {
-                updateStatus('bg-red-500', 'SIN CONEXIÓN');
-                showToast("Error de conexión");
-            }
-        }
+                return () => {
+                    if (html5QrCode && html5QrCode.isScanning) {
+                        html5QrCode.stop().catch(e => console.log(e));
+                    }
+                };
+            }, [view]);
 
-        function updateStatus(color, text) {
-            const el = document.getElementById('connection-status');
-            el.children[0].className = `w-2 h-2 rounded-full ${color}`;
-            el.children[1].innerText = text;
-        }
+            const handleInputChange = useCallback((e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+            }, []);
 
-        function listenToData() {
-            const path = `/artifacts/${appId}/public/data/inventario`;
-            db.collection(path).onSnapshot(snap => {
-                stock = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                renderInventory();
-                updateStats();
-            }, () => showToast("Error al sincronizar datos"));
-        }
+            const saveRecord = async () => {
+                if (!user) return;
+                const now = new Date();
+                const timestamp = now.toLocaleDateString() + ' ' + now.toLocaleTimeString();
+                const path = `artifacts/${appId}/public/data/inventario`;
+                
+                try {
+                    if (isEditing) {
+                        await db.collection(path).doc(formData.id).update({ 
+                            ...formData, 
+                            lastEdit: timestamp,
+                            updatedBy: user.uid 
+                        });
+                        setIsEditing(false);
+                    } else {
+                        const newBarcode = "CDB" + Math.floor(100000 + Math.random() * 900000).toString();
+                        await db.collection(path).add({
+                            ...formData,
+                            barcode: newBarcode,
+                            date: timestamp,
+                            createdAt: Date.now(),
+                            createdBy: user.uid
+                        });
+                    }
+                    setFormData(initialForm);
+                    setView('history');
+                } catch (e) {
+                    console.error("Error saving document: ", e);
+                }
+            };
 
-        function updateStats() {
-            const getCount = (status) => stock.filter(i => i.estado === status).length;
-            document.getElementById('stat-stock').innerText = getCount('Stock');
-            document.getElementById('stat-despacho').innerText = getCount('Despacho');
-            document.getElementById('stat-recibido').innerText = getCount('Recibido');
+            const handleUpdateStatus = async (statusType, value) => {
+                if (!user || !selectedItem) return;
+                const now = new Date();
+                const timestamp = now.toLocaleDateString() + ' ' + now.toLocaleTimeString();
+                const path = `artifacts/${appId}/public/data/inventario`;
+                
+                try {
+                    await db.collection(path).doc(selectedItem.id).update({ 
+                        [statusType]: value, 
+                        lastEdit: timestamp,
+                        updatedBy: user.uid 
+                    });
+                    setSelectedItem(prev => ({ ...prev, [statusType]: value }));
+                } catch (e) {
+                    console.error("Error updating status:", e);
+                }
+            };
 
-            const totalVol = stock.reduce((acc, c) => acc + (parseFloat(c.volumen) || 0), 0);
-            document.getElementById('stat-vol-total').innerText = totalVol.toFixed(3);
-        }
+            const handleDelete = async () => {
+                if (!user || !selectedItem) return;
+                const path = `artifacts/${appId}/public/data/inventario`;
+                try {
+                    await db.collection(path).doc(selectedItem.id).delete();
+                    setSelectedItem(null);
+                    setShowConfirmDelete(false);
+                } catch (e) {
+                    console.error("Error deleting document:", e);
+                }
+            };
 
-        // --- UI & NAVEGACIÓN ---
-        function navigate(viewId) {
-            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            document.getElementById(viewId).classList.add('active');
-            
-            const navId = 'nav-' + viewId.replace('view-', '');
-            const navEl = document.getElementById(navId);
-            if(navEl) navEl.classList.add('active');
+            const handleSearchCode = (code) => {
+                const found = records.find(r => r.barcode === code.trim());
+                if (found) {
+                    setSelectedItem(found);
+                    setView('menu');
+                } else {
+                    alert("Código no encontrado: " + code);
+                }
+            };
 
-            if (viewId === 'view-scan') startScanner();
-            else stopScanner();
-        }
+            const downloadExcel = () => {
+                const now = new Date();
+                const timestampStr = now.toLocaleDateString() + ' ' + now.toLocaleTimeString();
+                const worksheet = XLSX.utils.json_to_sheet(records);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Inventario Realtime");
+                XLSX.writeFile(workbook, `CDB_Cloud_Inventario_${timestampStr.replace(/[/:\s]/g, '_')}.xlsx`);
+            };
 
-        function toggleFormFields() {
-            const materia = document.getElementById('f-materia').value;
-            const standardFields = document.getElementById('standard-fields');
-            const costaneraFields = document.getElementById('costanera-fields');
+            const calculateTotalM3 = () => {
+                return records.reduce((acc, r) => {
+                    if (r.tipoMateria === 'Descarte') {
+                        return acc + (parseFloat(r.metrosCubicos) || 0);
+                    } else {
+                        const l = parseFloat(r.largo) || 0;
+                        const a = parseFloat(r.ancho) || 0;
+                        const e = parseFloat(r.espesor) || 0;
+                        const p = parseFloat(r.piezas) || 1;
+                        const vol = (l * a * e) / 1000000000;
+                        return acc + (vol * p);
+                    }
+                }, 0).toFixed(4);
+            };
 
-            if (materia === 'Costanera') {
-                standardFields.classList.add('hidden');
-                costaneraFields.classList.remove('hidden');
-            } else {
-                standardFields.classList.remove('hidden');
-                costaneraFields.classList.add('hidden');
-            }
-        }
-
-        function resetForm() {
-            document.getElementById('inventory-form').reset();
-            document.getElementById('edit-id').value = "";
-            document.getElementById('form-title').innerText = "REGISTRO";
-            document.getElementById('edit-badge').classList.add('hidden');
-            document.getElementById('btn-cancel').classList.add('hidden');
-            document.getElementById('btn-save').innerText = "Confirmar Registro";
-            toggleFormFields();
-        }
-
-        // --- RENDERIZADO INVENTARIO ---
-        function renderInventory() {
-            const query = document.getElementById('search-bar').value.toLowerCase();
-            const container = document.getElementById('inventory-container');
-            
-            const filtered = stock.filter(i => 
-                i.id.toLowerCase().includes(query) || 
-                (i.procedencia && i.procedencia.toLowerCase().includes(query)) ||
-                (i.materia && i.materia.toLowerCase().includes(query))
+            if (loading) return (
+                <div className="h-screen flex items-center justify-center bg-[#703818]">
+                    <div className="text-white text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-4 border-white border-t-transparent mx-auto mb-4"></div>
+                        <p className="font-black uppercase tracking-widest text-xs">Sincronizando Nube...</p>
+                    </div>
+                </div>
             );
 
-            if (filtered.length === 0) {
-                container.innerHTML = `<div class="p-10 text-center text-slate-400 font-bold text-xs uppercase">Sin resultados</div>`;
-                return;
-            }
-
-            container.innerHTML = filtered.map(item => `
-                <div onclick="showDetail('${item.id}')" class="bg-white p-5 rounded-[2.5rem] border border-slate-50 shadow-sm flex flex-col gap-3 active:scale-[0.98] transition-all cursor-pointer">
-                    <div class="flex justify-between items-start">
-                        <div class="flex-1">
-                            <div class="flex items-center gap-2">
-                                <span class="status-badge ${getStatusColor(item.estado)}">${item.estado}</span>
-                                <span class="text-[9px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full uppercase truncate max-w-[100px]">${item.procedencia || 'S/L'}</span>
+            return (
+                <div className="min-h-screen flex flex-col bg-slate-50">
+                    <header className="bg-[#703818] text-white p-4 flex items-center justify-between shadow-lg sticky top-0 z-50 no-print">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-white p-1 rounded-lg">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#703818" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
                             </div>
-                            <h3 class="font-black text-slate-800 text-lg mt-1">${item.materia}</h3>
-                            <p class="text-[10px] font-bold text-slate-400 font-mono tracking-tighter">ID: ${item.id}</p>
+                            <div>
+                                <h1 className="font-black text-lg uppercase tracking-tighter leading-none">CDB CLOUD</h1>
+                                <span className="text-[8px] font-bold text-orange-200 tracking-widest uppercase">Sincronizado</span>
+                            </div>
                         </div>
-                        <div class="text-right">
-                            <p class="text-sm font-black text-slate-900">${item.volumen} m³</p>
-                            <p class="text-[9px] font-bold text-slate-400 uppercase">${item.materia === 'Costanera' ? 'Granel' : item.cantidad + ' Pzs'}</p>
+                        <button onClick={downloadExcel} className="bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg text-[10px] font-bold flex items-center gap-2 uppercase tracking-widest border border-white/20">
+                            Excel
+                        </button>
+                    </header>
+
+                    <main className="flex-1 p-4 pb-24 max-w-2xl mx-auto w-full no-print">
+                        {view === 'menu' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <button onClick={() => { setIsEditing(false); setFormData(initialForm); setView('register'); }} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center gap-4 active:scale-95 transition-all">
+                                        <div className="text-orange-500 bg-orange-50 p-4 rounded-2xl"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></div>
+                                        <span className="font-black text-[10px] uppercase text-slate-600 tracking-widest text-center">Nuevo Ingreso</span>
+                                    </button>
+                                    <button onClick={() => setView('scan')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center gap-4 active:scale-95 transition-all">
+                                        <div className="text-blue-500 bg-blue-50 p-4 rounded-2xl"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path></svg></div>
+                                        <span className="font-black text-[10px] uppercase text-slate-600 tracking-widest text-center">Escanear / Buscar</span>
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <button onClick={() => setView('history')} className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center justify-between px-8 active:scale-95 transition-all w-full">
+                                        <div className="flex items-center gap-4">
+                                            <div className="text-amber-800 bg-amber-50 p-4 rounded-2xl"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg></div>
+                                            <p className="font-black text-blue-900 leading-none uppercase text-[10px]">Inventario Total</p>
+                                        </div>
+                                        <span className="text-3xl font-black text-amber-800">{records.length}</span>
+                                    </button>
+                                    <div className="bg-blue-900 text-white p-6 rounded-[32px] shadow-lg flex items-center justify-between px-8">
+                                        <div className="flex items-center gap-4">
+                                            <div className="bg-white/10 p-4 rounded-2xl"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg></div>
+                                            <p className="font-black text-white leading-none uppercase text-[10px] tracking-widest">Volumen m³</p>
+                                        </div>
+                                        <span className="text-2xl font-black">{calculateTotalM3()}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {view === 'scan' && (
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="bg-white rounded-[32px] p-2 overflow-hidden shadow-xl border border-slate-100">
+                                    <div id="reader"></div>
+                                </div>
+                                <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 space-y-4">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Entrada Manual</label>
+                                    <div className="flex gap-2">
+                                        <input type="text" value={manualCode} onChange={(e) => setManualCode(e.target.value)} placeholder="CDBXXXXXX" className="flex-1 bg-slate-50 p-4 rounded-2xl font-bold border border-slate-100 outline-none uppercase"/>
+                                        <button onClick={() => handleSearchCode(manualCode)} className="bg-blue-600 text-white p-4 rounded-2xl active:scale-90 transition-all shadow-lg">
+                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <button onClick={() => setView('menu')} className="w-full text-slate-400 font-bold uppercase text-[10px] py-4">Volver al Menú</button>
+                            </div>
+                        )}
+
+                        {view === 'register' && (
+                            <div className="bg-white rounded-[32px] p-6 shadow-sm animate-fade-in space-y-4">
+                                <h2 className="font-black text-xl text-blue-900 uppercase">{isEditing ? 'Editar Materia' : 'Registrar Materia'}</h2>
+                                <FormFields data={formData} onChange={handleInputChange} />
+                                <button onClick={saveRecord} className="w-full bg-[#703818] text-white font-black py-5 rounded-2xl uppercase shadow-xl active:scale-95 transition-all mt-6">{isEditing ? 'Guardar Cambios' : 'Confirmar Ingreso'}</button>
+                                {isEditing && <button onClick={() => setView('history')} className="w-full text-slate-400 font-bold uppercase text-[10px] py-2">Cancelar Edición</button>}
+                            </div>
+                        )}
+
+                        {view === 'history' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <h2 className="font-black text-xl text-blue-900 uppercase px-2">Stock General (Nube)</h2>
+                                <div className="space-y-3">
+                                    {records.length === 0 ? (
+                                        <div className="text-center py-20">
+                                            <p className="text-slate-300 font-black uppercase text-xs tracking-widest">Sin Registros en la Nube</p>
+                                        </div>
+                                    ) : records.map(r => (
+                                        <div key={r.id} onClick={() => setSelectedItem(r)} className="bg-white p-5 rounded-[28px] shadow-sm border border-slate-100 flex flex-col gap-3 active:bg-slate-50">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="bg-amber-50 w-10 h-10 rounded-xl flex items-center justify-center font-black text-amber-800 border border-amber-100">{r.tipoMateria ? r.tipoMateria[0] : '?'}</div>
+                                                    <div>
+                                                        <p className="font-black text-blue-900 uppercase text-sm leading-none">{r.tipoMateria}</p>
+                                                        <p className="text-[10px] text-slate-400 font-mono mt-1 tracking-tighter">{r.barcode}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="font-black text-lg text-[#703818]">{r.tipoMateria === 'Descarte' ? `${r.metrosCubicos} m³` : `${r.largo}x${r.ancho}x${r.espesor}`}</p>
+                                                    <p className="text-[9px] font-bold text-slate-400 uppercase">{r.piezas ? `${r.piezas} pzs` : 'Cantidad Única'}</p>
+                                                </div>
+                                            </div>
+                                            <div className="pt-2 border-t border-slate-50 grid grid-cols-2 gap-y-1">
+                                                <p className="text-[9px] text-slate-400 font-bold uppercase">Estado: <span className="text-blue-600">{r.estado}</span></p>
+                                                <p className="text-[9px] text-slate-400 font-bold uppercase text-right">Lote: <span className="text-slate-600">{r.procedencia || '-'}</span></p>
+                                                <p className="text-[9px] text-slate-400 font-bold uppercase">Flujo: <span className="text-amber-700">{r.flujo}</span></p>
+                                                <p className="text-[9px] text-slate-400 font-bold uppercase text-right">Fecha: <span className="text-slate-600">{r.date || '-'}</span></p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {selectedItem && (
+                            <div className="fixed inset-0 z-[60] flex flex-col bg-white animate-fade-in overflow-y-auto no-print">
+                                <div className="bg-[#703818] text-white p-5 flex items-center justify-between sticky top-0 shadow-lg">
+                                    <span className="font-black uppercase tracking-widest text-[11px]">Control de Item</span>
+                                    <button onClick={() => setSelectedItem(null)} className="bg-white/20 p-2 rounded-full active:scale-90 transition-all">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                    </button>
+                                </div>
+
+                                <div className="p-8 space-y-8">
+                                    <div className="text-center space-y-2">
+                                        <h2 className="text-5xl font-black text-blue-900 uppercase tracking-tighter">{selectedItem.tipoMateria}</h2>
+                                        <p className="text-lg font-bold text-slate-500 uppercase">LOTE: {selectedItem.procedencia || 'SIN LOTE'}</p>
+                                    </div>
+
+                                    <div className="bg-white p-6 rounded-[40px] border-4 border-slate-50 flex flex-col items-center gap-2 shadow-inner">
+                                        <div className="barcode-font text-slate-800">*{selectedItem.barcode}*</div>
+                                        <p className="font-mono font-black text-2xl tracking-[0.5em] text-slate-800">{selectedItem.barcode}</p>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-4">
+                                        <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 flex flex-col gap-2">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase">Especificaciones</p>
+                                            <p className="font-black text-blue-900 text-xl">
+                                                {selectedItem.tipoMateria === 'Descarte' ? `${selectedItem.metrosCubicos} m³` : `${selectedItem.largo}x${selectedItem.ancho}x${selectedItem.espesor} (${selectedItem.piezas} pzs)`}
+                                            </p>
+                                            <div className="flex gap-2">
+                                                <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">{selectedItem.estado}</span>
+                                                <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">{selectedItem.flujo}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <button onClick={() => handleUpdateStatus('flujo', 'Recibido')} className="bg-purple-600 text-white font-black py-5 rounded-2xl uppercase text-[11px] shadow-lg active:scale-95 transition-all">Recibido</button>
+                                            <button onClick={() => handleUpdateStatus('flujo', 'Despacho')} className="bg-blue-600 text-white font-black py-5 rounded-2xl uppercase text-[11px] shadow-lg active:scale-95 transition-all">Despachar</button>
+                                        </div>
+
+                                        <button onClick={() => window.print()} className="w-full bg-[#1e293b] text-white font-black py-5 rounded-2xl uppercase text-[11px] active:scale-95 transition-all flex items-center justify-center gap-3 shadow-xl">
+                                            Imprimir Etiqueta
+                                        </button>
+
+                                        <button onClick={() => { setFormData({...selectedItem}); setIsEditing(true); setView('register'); setSelectedItem(null); }} className="w-full bg-slate-100 text-slate-600 font-black py-5 rounded-2xl uppercase text-[11px] active:scale-95 transition-all">Editar Datos</button>
+                                        
+                                        <button onClick={() => setShowConfirmDelete(true)} className="w-full text-red-400 font-black text-[9px] uppercase py-4 tracking-widest text-center">Borrar Permanentemente</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {showConfirmDelete && (
+                            <div className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-6 no-print">
+                                <div className="bg-white rounded-[40px] p-8 w-full max-sm text-center space-y-6 animate-fade-in">
+                                    <div className="text-red-500 mx-auto w-16 h-16 bg-red-50 rounded-full flex items-center justify-center"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg></div>
+                                    <h3 className="font-black text-xl text-slate-900 uppercase">¿Borrar de la Nube?</h3>
+                                    <p className="text-slate-400 font-bold text-xs uppercase tracking-tight">Esta acción se reflejará en todos los dispositivos conectados.</p>
+                                    <div className="flex flex-col gap-3">
+                                        <button onClick={handleDelete} className="bg-red-500 text-white font-black py-4 rounded-2xl uppercase text-xs">Confirmar Borrado</button>
+                                        <button onClick={() => setShowConfirmDelete(false)} className="bg-slate-100 text-slate-600 font-black py-4 rounded-2xl uppercase text-xs">Cancelar</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {selectedItem && (
+                        <div id="print-area" className="hidden">
+                            <div className="border-[4px] border-black p-4 text-center">
+                                <h1 className="text-5xl font-black border-b-[6px] border-black pb-4 mb-2 uppercase tracking-tighter">{selectedItem.tipoMateria}</h1>
+                                <p className="text-2xl font-black uppercase mb-6 tracking-widest">{selectedItem.procedencia || 'SIN LOTE'}</p>
+                                <div className="flex flex-col items-center justify-center">
+                                    <div className="barcode-font" style={{fontSize: '140px'}}>*{selectedItem.barcode}*</div>
+                                    <div className="text-3xl font-mono font-black mt-2">{selectedItem.barcode}</div>
+                                </div>
+                                <div className="mt-8 border-t-[4px] border-black pt-4">
+                                    <p className="text-xl font-black uppercase tracking-tighter">Sincronizado Cloud: {selectedItem.barcode}</p>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                    
-                    <div class="text-[10px] font-bold text-slate-500 bg-slate-50 p-3 rounded-2xl flex justify-between items-center">
-                        ${item.materia === 'Costanera' ? '<span>Mesa de Descarte</span>' : `<span>${item.largo}x${item.ancho}x${item.espesor} mm</span>`}
-                        <div class="flex gap-2" onclick="event.stopPropagation()">
-                             <button onclick="editItem('${item.id}')" class="p-2.5 bg-white border border-slate-200 rounded-xl shadow-sm hover:bg-amber-50">✏️</button>
-                             <button onclick="deleteItem('${item.id}')" class="p-2.5 bg-red-50 rounded-xl text-red-500 border border-red-100">🗑️</button>
-                        </div>
-                    </div>
+                    )}
+
+                    <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-slate-100 px-8 py-6 flex justify-between items-center z-40 shadow-[0_-10px_30px_rgba(0,0,0,0.05)] no-print">
+                        <button onClick={() => setView('menu')} className={`transition-all ${view === 'menu' ? 'scale-125 text-[#703818]' : 'text-slate-300'}`}><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg></button>
+                        <button onClick={() => { setIsEditing(false); setFormData(initialForm); setView('register'); }} className={`transition-all ${view === 'register' ? 'scale-125 text-[#703818]' : 'text-slate-300'}`}><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg></button>
+                        <button onClick={() => setView('history')} className={`transition-all ${view === 'history' ? 'scale-125 text-[#703818]' : 'text-slate-300'}`}><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg></button>
+                    </nav>
                 </div>
-            `).join('');
+            );
         }
 
-        // --- DETALLE Y MODAL ---
-        function showDetail(id) {
-            const item = stock.find(i => i.id === id);
-            if(!item) return;
-
-            document.getElementById('modal-materia').innerText = item.materia;
-            document.getElementById('modal-id').innerText = item.id;
-            document.getElementById('modal-procedencia').innerText = item.procedencia || "SIN LOTE";
-            document.getElementById('modal-volumen').innerText = item.volumen + " m³";
-            document.getElementById('modal-dims').innerText = item.materia === 'Costanera' ? "Materia de descarte" : `${item.largo} x ${item.ancho} x ${item.espesor} mm | ${item.cantidad} Pzs`;
-            
-            const badge = document.getElementById('modal-badge');
-            badge.className = `status-badge ${getStatusColor(item.estado)}`;
-            badge.innerText = item.estado;
-
-            document.getElementById('barcode-text').innerText = `${item.materia} - ${item.id}`;
-
-            // Generar Código de Barras
-            JsBarcode("#barcode", item.id, {
-                format: "CODE128",
-                width: 2.5,
-                height: 60,
-                displayValue: false
-            });
-
-            // IMPORTANTE: Vincular botón de editar del modal
-            document.getElementById('modal-edit-btn').onclick = () => {
-                closeModal();
-                editItem(item.id);
-            };
-
-            document.getElementById('detail-modal').classList.remove('hidden');
-        }
-
-        function closeModal() {
-            document.getElementById('detail-modal').classList.add('hidden');
-        }
-
-        function getStatusColor(s) {
-            if(s === 'Stock') return 'bg-emerald-100 text-emerald-600';
-            if(s === 'Despacho') return 'bg-blue-100 text-blue-600';
-            return 'bg-purple-100 text-purple-600';
-        }
-
-        // --- OPERACIONES ---
-        document.getElementById('inventory-form').onsubmit = async (e) => {
-            e.preventDefault();
-            const editId = document.getElementById('edit-id').value;
-            const materia = document.getElementById('f-materia').value;
-            
-            const data = {
-                materia,
-                procedencia: document.getElementById('f-procedencia').value.toUpperCase(),
-                estado: document.querySelector('input[name="estado"]:checked').value,
-                updatedAt: new Date().toISOString()
-            };
-
-            if (materia === 'Costanera') {
-                data.volumen = parseFloat(document.getElementById('f-volumen-manual').value) || 0;
-                data.largo = data.ancho = data.espesor = data.cantidad = 0;
-            } else {
-                data.largo = parseInt(document.getElementById('f-largo').value) || 0;
-                data.ancho = parseInt(document.getElementById('f-ancho').value) || 0;
-                data.espesor = parseInt(document.getElementById('f-espesor').value) || 0;
-                data.cantidad = parseInt(document.getElementById('f-cantidad').value) || 0;
-                data.volumen = parseFloat(((data.largo * data.ancho * data.espesor * data.cantidad) / 1000000000).toFixed(4));
-            }
-
-            try {
-                const coll = db.collection(`/artifacts/${appId}/public/data/inventario`);
-                if (editId) {
-                    await coll.doc(editId).update(data);
-                    showToast("Actualizado con éxito");
-                } else {
-                    data.createdAt = new Date().toISOString();
-                    const newId = `CDB-${Math.floor(1000 + Math.random() * 8999)}`;
-                    await coll.doc(newId).set(data);
-                    showToast("Registrado correctamente");
-                }
-                resetForm();
-                navigate('view-inventory');
-            } catch (err) { 
-                showToast("Error al guardar"); 
-            }
-        };
-
-        function editItem(id) {
-            const item = stock.find(i => i.id === id);
-            if (!item) return;
-
-            document.getElementById('edit-id').value = id;
-            document.getElementById('form-title').innerText = "EDITAR PAQUETE";
-            document.getElementById('edit-badge').classList.remove('hidden');
-            document.getElementById('btn-save').innerText = "Guardar Cambios";
-            document.getElementById('btn-cancel').classList.remove('hidden');
-
-            document.getElementById('f-materia').value = item.materia;
-            toggleFormFields();
-            
-            if (item.materia === 'Costanera') {
-                document.getElementById('f-volumen-manual').value = item.volumen;
-            } else {
-                document.getElementById('f-largo').value = item.largo;
-                document.getElementById('f-ancho').value = item.ancho;
-                document.getElementById('f-espesor').value = item.espesor;
-                document.getElementById('f-cantidad').value = item.cantidad;
-            }
-
-            document.getElementById('f-procedencia').value = item.procedencia || "";
-            const radio = document.querySelector(`input[name="estado"][value="${item.estado}"]`);
-            if (radio) radio.checked = true;
-
-            navigate('view-form');
-        }
-
-        async function deleteItem(id) {
-            if(confirm("¿Eliminar este registro permanentemente?")) {
-                try {
-                    await db.collection(`/artifacts/${appId}/public/data/inventario`).doc(id).delete();
-                    showToast("Eliminado");
-                } catch(e) { showToast("Error al eliminar"); }
-            }
-        }
-
-        // --- SCANNER ---
-        function startScanner() {
-            if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
-            html5QrCode.start({ facingMode: "environment" }, { fps: 20, qrbox: 280 }, (txt) => {
-                stopScanner();
-                handleScan(txt);
-            }).catch(() => showToast("Cámara no disponible"));
-        }
-
-        function stopScanner() { if (html5QrCode?.isScanning) html5QrCode.stop(); }
-
-        function handleScan(code) {
-            const cleanCode = code.trim().toUpperCase();
-            const item = stock.find(i => i.id.toUpperCase() === cleanCode);
-            if (item) showDetail(item.id);
-            else showToast("No se encontró el código");
-        }
-
-        function searchManual() { handleScan(document.getElementById('manual-code').value); }
-
-        // --- EXCEL ---
-        function exportToExcel() {
-            const formatted = stock.map(i => ({
-                ID: i.id, Materia: i.materia, Lote: i.procedencia, Estado: i.estado,
-                Vol_m3: i.volumen, L: i.largo, A: i.ancho, E: i.espesor, Cant: i.cantidad
-            }));
-            const ws = XLSX.utils.json_to_sheet(formatted);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Inventario");
-            XLSX.writeFile(wb, `CDB_Inventario_${new Date().toISOString().slice(0,10)}.xlsx`);
-        }
-
-        function showToast(msg) {
-            const t = document.getElementById('toast');
-            t.innerText = msg;
-            t.style.opacity = "1";
-            t.style.transform = "translate(-50%, -20px)";
-            setTimeout(() => {
-                t.style.opacity = "0";
-                t.style.transform = "translate(-50%, 10px)";
-            }, 3000);
-        }
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>
